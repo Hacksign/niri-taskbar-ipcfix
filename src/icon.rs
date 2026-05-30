@@ -4,8 +4,8 @@ use std::{
     sync::{Arc, LazyLock, Mutex},
 };
 use waybar_cffi::gtk::{
-    gio::DesktopAppInfo,
-    prelude::{AppInfoExt, IconExt},
+    gio::{AppInfo, DesktopAppInfo},
+    prelude::{AppInfoExt, Cast, IconExt},
 };
 
 /// A cache for taskbar icons.
@@ -28,6 +28,10 @@ impl Cache {
 
 fn lookup(id: &str) -> Option<PathBuf> {
     if let Some(icon) = lookup_icon(id) {
+        return Some(icon);
+    }
+
+    if let Some(icon) = lookup_by_startup_wm_class(id) {
         return Some(icon);
     }
 
@@ -67,8 +71,7 @@ fn lookup(id: &str) -> Option<PathBuf> {
         }
     }
 
-    // This is _very_ roughly adapted from the wlr/taskbar module built into Waybar. We don't do
-    // the same startup_wm_class check here for now.
+    // This is _very_ roughly adapted from the wlr/taskbar module built into Waybar.
     let infos = DesktopAppInfo::search(id);
     for possible in infos.into_iter().flatten() {
         if let Some(info) = DesktopAppInfo::new(&possible) {
@@ -140,6 +143,18 @@ fn try_match_wine_desktop(path: &std::path::Path, exe_stem: &str) -> Option<Path
         return info.icon_path();
     }
 
+    None
+}
+
+fn lookup_by_startup_wm_class(wm_class: &str) -> Option<PathBuf> {
+    for info in AppInfo::all() {
+        let Ok(desktop_info) = info.dynamic_cast::<DesktopAppInfo>() else {
+            continue;
+        };
+        if desktop_info.startup_wm_class().as_deref() == Some(wm_class) {
+            return desktop_info.icon_path();
+        }
+    }
     None
 }
 
