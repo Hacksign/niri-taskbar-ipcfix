@@ -4,8 +4,8 @@ use std::{
     sync::{Arc, LazyLock, Mutex},
 };
 use waybar_cffi::gtk::{
-    gio::{AppInfo, DesktopAppInfo},
-    prelude::{AppInfoExt, Cast, IconExt},
+    gio::{AppInfo, DesktopAppInfo, FileIcon},
+    prelude::{AppInfoExt, Cast, FileExt, IconExt},
 };
 
 /// A cache for taskbar icons.
@@ -151,8 +151,13 @@ fn lookup_by_startup_wm_class(wm_class: &str) -> Option<PathBuf> {
         let Ok(desktop_info) = info.dynamic_cast::<DesktopAppInfo>() else {
             continue;
         };
+
         if desktop_info.startup_wm_class().as_deref() == Some(wm_class) {
-            return desktop_info.icon_path();
+            if let Some(icon) = desktop_info.icon() {
+                if let Ok(file_icon) = icon.downcast::<FileIcon>() {
+                    return file_icon.file().path();
+                }
+            }
         }
     }
     None
