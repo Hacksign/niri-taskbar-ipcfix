@@ -4,8 +4,8 @@ use std::{
     sync::{Arc, LazyLock, Mutex},
 };
 use waybar_cffi::gtk::{
-    gio::{AppInfo, DesktopAppInfo, FileIcon},
-    prelude::{AppInfoExt, Cast, FileExt, IconExt},
+    gio::{AppInfo, DesktopAppInfo},
+    prelude::{AppInfoExt, Cast, IconExt},
 };
 
 /// A cache for taskbar icons.
@@ -44,14 +44,6 @@ fn lookup(id: &str) -> Option<PathBuf> {
         }
     }
 
-    // Wine apps report their process name as the app_id (e.g. "notepad++.exe"). There's no
-    // consistent icon naming scheme so we have to go hunting through .desktop files.
-    if id.ends_with(".exe") {
-        if let Some(path) = lookup_wine_exe(id) {
-            return Some(path);
-        }
-    }
-
     // KDE applications are special, so we'll go hunt for them ourselves. Again, this is loosely
     // adapted from wlr/taskbar.
     for dir in XDG_DATA_DIRS.iter() {
@@ -84,68 +76,6 @@ fn lookup(id: &str) -> Option<PathBuf> {
     None
 }
 
-/// Wine reports its windows as e.g. "notepad++.exe" — not exactly a freedesktop icon name.
-/// We strip the .exe and scan wine's .desktop files to find a match.
-fn lookup_wine_exe(exe_name: &str) -> Option<PathBuf> {
-    let stem = exe_name.trim_end_matches(".exe").to_lowercase();
-
-    for dir in XDG_DATA_DIRS.iter() {
-        let wine_dir = dir.join("applications/wine");
-        let Ok(entries) = std::fs::read_dir(&wine_dir) else {
-            continue;
-        };
-
-        for entry in entries.flatten() {
-            let path = entry.path();
-
-            // Wine likes to nest .desktop files in subdirectories like
-            // applications/wine/Programs/Notepad++/ — so we go one level deeper.
-            if path.is_dir() {
-                if let Ok(sub_entries) = std::fs::read_dir(&path) {
-                    for sub_entry in sub_entries.flatten() {
-                        let sub_path = sub_entry.path();
-                        if sub_path.extension().and_then(|e| e.to_str()) == Some("desktop") {
-                            if let Some(icon) = try_match_wine_desktop(&sub_path, &stem) {
-                                return Some(icon);
-                            }
-                        }
-                    }
-                }
-                continue;
-            }
-
-            if path.extension().and_then(|e| e.to_str()) == Some("desktop") {
-                if let Some(icon) = try_match_wine_desktop(&path, &stem) {
-                    return Some(icon);
-                }
-            }
-        }
-    }
-
-    None
-}
-
-/// Try to match a single .desktop file against an exe stem (e.g. "notepad++").
-/// We check Exec= first since it usually contains the exe path, then fall back to Name=.
-fn try_match_wine_desktop(path: &std::path::Path, exe_stem: &str) -> Option<PathBuf> {
-    let info = DesktopAppInfo::from_filename(path)?;
-
-    // Exec= usually looks like "env WINEPREFIX=... wine .../notepad++.exe"
-    if let Some(exec) = info.commandline() {
-        if exec.to_string_lossy().to_lowercase().contains(exe_stem) {
-            return info.icon_path();
-        }
-    }
-
-    // Fall back to Name= — less precise but catches wrapper scripts and renamed launchers.
-    let name = info.name().to_string().to_lowercase();
-    if name.contains(exe_stem) {
-        return info.icon_path();
-    }
-
-    None
-}
-
 fn lookup_by_startup_wm_class(wm_class: &str) -> Option<PathBuf> {
     for info in AppInfo::all() {
         let Ok(desktop_info) = info.dynamic_cast::<DesktopAppInfo>() else {
@@ -153,10 +83,8 @@ fn lookup_by_startup_wm_class(wm_class: &str) -> Option<PathBuf> {
         };
 
         if desktop_info.startup_wm_class().as_deref() == Some(wm_class) {
-            if let Some(icon) = desktop_info.icon() {
-                if let Ok(file_icon) = icon.downcast::<FileIcon>() {
-                    return file_icon.file().path();
-                }
+            if let Some(path) = desktop_info.icon_path() {
+                return Some(path);
             }
         }
     }
